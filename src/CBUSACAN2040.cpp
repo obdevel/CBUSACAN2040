@@ -62,23 +62,18 @@ CBUSACAN2040::CBUSACAN2040(CBUSConfig *the_config) : CBUSbase(the_config) {
 }
 
 void CBUSACAN2040::initMembers(void) {
-  _num_rx_buffers = 0;
-  _num_tx_buffers = 0;
+  _num_rx_buffers = rx_qsize;
+  _num_tx_buffers = tx_qsize;
   eventhandler = NULL;
   eventhandlerex = NULL;
   framehandler = NULL;
   _gpio_tx = 0;
   _gpio_rx = 0;
 
-  // allocate tx and tx buffers -- tx is currently unused
-  rx_buffer = new circular_buffer(_num_rx_buffers);
-  tx_buffer = new circular_buffer(_num_tx_buffers);
-
   acan2040p = this;
 }
 
 CBUSACAN2040::~CBUSACAN2040() {
-
 }
 
 //
@@ -90,6 +85,10 @@ bool CBUSACAN2040::begin(bool poll, SPIClassRP2040 spi) {
 
   (void)(spi);
   (void)poll;
+
+  // allocate tx and tx buffers -- tx is currently unused
+  rx_buffer = new circular_buffer(_num_rx_buffers);
+  tx_buffer = new circular_buffer(_num_tx_buffers);
 
   acan2040 = new ACAN2040(0, _gpio_tx, _gpio_rx, CANBITRATE, F_CPU, cb);
   acan2040->begin();
@@ -217,8 +216,10 @@ void CBUSACAN2040::printStatus(void) {
 //
 
 void CBUSACAN2040::reset(void) {
-  Serial.printf("not implemented");
-  return;
+  delete rx_buffer;
+  delete tx_buffer;
+  delete acan2040;
+  begin();
 }
 
 //
@@ -236,9 +237,9 @@ void CBUSACAN2040::setPins(byte gpio_tx, byte gpio_rx) {
 /// this can be tuned according to bus load and available memory
 //
 
-void CBUSACAN2040::setNumBuffers(byte num_rx_buffers, byte _num_tx_buffers) {
+void CBUSACAN2040::setNumBuffers(byte num_rx_buffers, byte num_tx_buffers) {
   _num_rx_buffers = num_rx_buffers;
-  _num_tx_buffers = _num_tx_buffers;
+  _num_tx_buffers = num_tx_buffers;
 }
 
 

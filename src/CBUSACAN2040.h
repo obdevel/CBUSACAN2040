@@ -92,7 +92,7 @@ private:
 
 //
 /// an implementation of the abstract base CBUS class
-/// using the MCP_CAN library for MCP2515
+/// using the ACAN2040 wrapper of the PIO CAN controller
 //
 
 class CBUSACAN2040 : public CBUSbase {
