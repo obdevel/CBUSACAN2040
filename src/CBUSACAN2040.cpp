@@ -189,7 +189,7 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
   tx_msg.dlc = msg->len;
 
   for (uint8_t i = 0; i < msg->len && i < 8; i++) {
-    tx_msg.data[0] = msg->data[i];
+    tx_msg.data[i] = msg->data[i];
   }
 
   if (acan2040->send_message(&tx_msg)) {
