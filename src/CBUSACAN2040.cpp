@@ -81,10 +81,10 @@ CBUSACAN2040::~CBUSACAN2040() {
 /// default poll arg is set to false, so as not to break existing code
 //
 
-bool CBUSACAN2040::begin(bool poll, SPIClassRP2040 spi) {
+bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
 
-  (void)(spi);
-  (void)poll;
+  (void)(spi);      // not used
+  (void)poll;       // not used
 
   // allocate tx and tx buffers -- tx is currently unused
   rx_buffer = new circular_buffer(_num_rx_buffers);
@@ -130,7 +130,7 @@ void CBUSACAN2040::notify_cb(struct can2040 *cd, uint32_t notify, struct can2040
 
   switch (notify) {
   case CAN2040_NOTIFY_RX:
-    Serial.printf("acan2040 cb: message received\n");
+    // DEBUG_SERIAL.printf("acan2040 cb: message received\n");
 
     _msg.id = amsg->id;
     _msg.len = amsg->dlc;
@@ -146,13 +146,13 @@ void CBUSACAN2040::notify_cb(struct can2040 *cd, uint32_t notify, struct can2040
     break;
 
   case CAN2040_NOTIFY_TX:
-    Serial.printf("acan2040 cb: message sent ok\n");
+    // DEBUG_SERIAL.printf("acan2040 cb: message sent ok\n");
     break;
   case CAN2040_NOTIFY_ERROR:
-    Serial.printf("acan2040 cb: an error occurred\n");
+    // DEBUG_SERIAL.printf("acan2040 cb: an error occurred\n");
     break;
   default:
-    Serial.printf("acan2040 cb: unknown event type\n");
+    // DEBUG_SERIAL.printf("acan2040 cb: unknown event type\n");
     break;
   }
 
@@ -173,7 +173,7 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
   // priority defaults to 1011 low/medium
 
   if (!acan2040->ok_to_send()) {
-    Serial.print("no space available to send message");
+    DEBUG_SERIAL.print("no space available to send message\n");
     return false;
   }
 
@@ -193,10 +193,10 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
   }
 
   if (acan2040->send_message(&tx_msg)) {
-    Serial.printf("ok\n");
+    // DEBUG_SERIAL.printf("ok\n");
     return true;
   } else {
-    Serial.printf("error sending message\n");
+    DEBUG_SERIAL.printf("error sending CBUS message\n");
     return false;
   }
 
@@ -207,7 +207,7 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
 //
 
 void CBUSACAN2040::printStatus(void) {
-  Serial.printf("not implemented");
+  DEBUG_SERIAL.printf("not implemented");
   return;
 }
 
