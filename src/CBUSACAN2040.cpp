@@ -165,41 +165,56 @@ void CBUSACAN2040::notify_cb(struct can2040 *cd, uint32_t notify, struct can2040
 
 bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority) {
 
-  struct can2040_msg tx_msg;
-
   // caller must populate the message data
   // this method will create the correct frame header (CAN ID and priority bits)
   // rtr and ext default to false unless arguments are supplied - see method definition in .h
   // priority defaults to 1011 low/medium
 
-  if (!acan2040->ok_to_send()) {
-    DEBUG_SERIAL.print("no space available to send message\n");
-    return false;
-  }
+  bool ok;
 
+
+  // format message and send
+
+  msg->rtr = rtr;
+  msg->ext = ext;
   makeHeader(msg, priority);                      // default priority unless user overrides
+  ok = sendMessageNoUpdate(msg);                  // send the CAN message
 
-  if (rtr)
-    msg->id |= 0x40000000;
-
-  if (ext)
-    msg->id |= 0x80000000;
-
-  tx_msg.id = msg->id;
-  tx_msg.dlc = msg->len;
-
-  for (uint8_t i = 0; i < msg->len && i < 8; i++) {
-    tx_msg.data[i] = msg->data[i];
+  // call user transmit handler
+  if (transmithandler != nullptr) {
+    (void)(*transmithandler)(msg);
   }
 
-  if (acan2040->send_message(&tx_msg)) {
-    // DEBUG_SERIAL.printf("ok\n");
-    return true;
-  } else {
-    DEBUG_SERIAL.printf("error sending CBUS message\n");
-    return false;
+  return ok;
+}
+
+//
+/// send a CAN message with no further changes to header and priority
+//
+
+bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
+
+  bool ok;
+  struct can2040_msg tx_msg;
+
+  if ((ok = acan2040->ok_to_send())) {
+    tx_msg.id = msg->id;
+    tx_msg.dlc = msg->len;
+
+    if (msg->rtr)
+      tx_msg.id |= 0x40000000;
+
+    if (msg->ext)
+      tx_msg.id |= 0x80000000;
+
+    for (uint8_t i = 0; i < msg->len && i < 8; i++) {
+      tx_msg.data[i] = msg->data[i];
+    }
+
+    ok = acan2040->send_message(&tx_msg);
   }
 
+  return ok;
 }
 
 //
@@ -207,7 +222,7 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
 //
 
 void CBUSACAN2040::printStatus(void) {
-  DEBUG_SERIAL.printf("not implemented");
+  // DEBUG_SERIAL.printf("not implemented");
   return;
 }
 
@@ -277,7 +292,7 @@ bool circular_buffer::available(void) {
 /// store an item to the buffer - overwrite oldest item if buffer is full
 /// only called from an interrupt context so we don't need to worry about subsequent interrupts
 
-void circular_buffer::put(const CANFrame * item) {
+void circular_buffer::put(const CANFrame *item) {
 
   memcpy((CANFrame*)&_buffer[_head]._item, (const CANFrame *)item, sizeof(CANFrame));
   _buffer[_head]._item_insert_time = micros();
