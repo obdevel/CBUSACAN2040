@@ -100,10 +100,39 @@ bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
 //
 
 //
+/// attempt to send any buffered messages in the tx buffer
 /// check for one or more messages in the receive buffer
 //
 
 bool CBUSACAN2040::available(void) {
+
+  CANFrame cf;
+  struct can2040_msg tx_msg;
+
+  /// attempt to drain down the tx buffer
+
+  while (tx_buffer->available() && acan2040->ok_to_send()) {
+
+    memcpy((CANFrame *)&cf, tx_buffer->get(), sizeof(CANFrame));
+
+    tx_msg.id = cf.id;
+    tx_msg.dlc = cf.len;
+
+    if (cf.rtr)
+      tx_msg.id |= 0x40000000;
+
+    if (cf.ext)
+      tx_msg.id |= 0x80000000;
+
+    for (uint8_t i = 0; i < cf.len && i < 8; i++) {
+      tx_msg.data[i] = cf.data[i];
+    }
+
+    acan2040->send_message(&tx_msg);
+  }
+
+  /// check for new received messages
+
   return rx_buffer->available();
 }
 
@@ -172,7 +201,6 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
 
   bool ok;
 
-
   // format message and send
 
   msg->rtr = rtr;
@@ -197,6 +225,8 @@ bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
   bool ok;
   struct can2040_msg tx_msg;
 
+  /// send message if can2040 can accept it, otherwise buffer it in the tx queue
+
   if ((ok = acan2040->ok_to_send())) {
     tx_msg.id = msg->id;
     tx_msg.dlc = msg->len;
@@ -212,6 +242,8 @@ bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
     }
 
     ok = acan2040->send_message(&tx_msg);
+  } else {
+    tx_buffer->put(msg);
   }
 
   return ok;
