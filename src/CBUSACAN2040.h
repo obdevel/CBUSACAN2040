@@ -44,51 +44,13 @@
 
 // constants
 
-static const byte tx_qsize = 8;
-static const byte rx_qsize = 32;
+static const byte tx_qsize = 16;
+static const byte rx_qsize = 64;
 static const byte txpin = 1;
 static const byte rx_pin = 2;
 static const uint32_t CANBITRATE = 125000UL;                // 125Kb/s - fixed for CBUS
 
 /// class definitions
-
-// buffer item type
-
-typedef struct _buffer_entry {
-  unsigned long _item_insert_time;
-  CANFrame _item;
-} buffer_entry_t;
-
-//
-/// a circular buffer class
-//
-
-class circular_buffer {
-
-public:
-  circular_buffer(byte num_items);
-  ~circular_buffer();
-  bool available(void);
-  void put(const CANFrame *cf);
-  CANFrame *peek(void);
-  CANFrame *get(void);
-  unsigned long insert_time(void);
-  bool full(void);
-  void clear(void);
-  bool empty(void);
-  byte size(void);
-  byte free_slots(void);
-  unsigned int puts();
-  unsigned int gets();
-  byte hwm(void);
-  unsigned int overflows(void);
-
-private:
-  bool _full;
-  byte _head, _tail, _capacity, _size, _hwm;
-  unsigned int _puts, _gets, _overflows;
-  buffer_entry_t *_buffer;
-};
 
 //
 /// an implementation of the abstract base CBUS class
@@ -113,17 +75,17 @@ public:
 
   // these methods are specific to this implementation
   // they are not declared or implemented by the base CBUS class
-  void setNumBuffers(byte num_rx_buffers, byte _num_tx_buffers = 2);
+  void setNumBuffers(unsigned int num_rx_buffers, unsigned int _num_tx_buffers = 2);
   void setPins(byte tx_pin, byte rx_pin);
   void printStatus(void);
   void notify_cb(struct can2040 *cd, uint32_t notify, struct can2040_msg *amsg);
 
   ACAN2040 *acan2040;
-  circular_buffer *tx_buffer, *rx_buffer;
+  queue_t *tx_queue, *rx_queue;
 
 private:
   void initMembers(void);
   byte _gpio_tx, _gpio_rx;
-  byte _num_tx_buffers, _num_rx_buffers;
+  unsigned int _num_tx_buffers, _num_rx_buffers;
 };
 

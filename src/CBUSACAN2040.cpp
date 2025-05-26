@@ -86,9 +86,9 @@ bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
   (void)(spi);      // not used
   (void)poll;       // not used
 
-  // allocate tx and tx buffers -- tx is currently unused
-  rx_buffer = new circular_buffer(_num_rx_buffers);
-  tx_buffer = new circular_buffer(_num_tx_buffers);
+  // allocate tx and tx buffers
+  queue_init(tx_queue, sizeof(struct can2040_msg), _num_tx_buffers);
+  queue_init(rx_queue, sizeof(struct can2040_msg), _num_rx_buffers);
 
   acan2040 = new ACAN2040(0, _gpio_tx, _gpio_rx, CANBITRATE, F_CPU, cb);
   acan2040->begin();
@@ -110,30 +110,16 @@ bool CBUSACAN2040::available(void) {
   struct can2040_msg tx_msg;
 
   /// attempt to drain down the tx buffer
+  /// do this here as it's the only function that is called sufficiently frequently
 
-  while (tx_buffer->available() && acan2040->ok_to_send()) {
-
-    memcpy((CANFrame *)&cf, tx_buffer->get(), sizeof(CANFrame));
-
-    tx_msg.id = cf.id;
-    tx_msg.dlc = cf.len;
-
-    if (cf.rtr)
-      tx_msg.id |= 0x40000000;
-
-    if (cf.ext)
-      tx_msg.id |= 0x80000000;
-
-    for (uint8_t i = 0; i < cf.len && i < 8; i++) {
-      tx_msg.data[i] = cf.data[i];
-    }
-
+  while (!queue_is_empty(tx_queue) && acan2040->ok_to_send()) {
+    queue_try_remove(tx_queue, &tx_msg);
     acan2040->send_message(&tx_msg);
   }
 
   /// check for new received messages
 
-  return rx_buffer->available();
+  return (!queue_is_empty(rx_queue));
 }
 
 //
@@ -143,9 +129,23 @@ bool CBUSACAN2040::available(void) {
 CANFrame CBUSACAN2040::getNextMessage(void) {
 
   CANFrame cf;
+  struct can2040_msg rx_msg;
 
-  ++_numMsgsRcvd;
-  memcpy((CANFrame *)&cf, rx_buffer->get(), sizeof(CANFrame));
+  if (queue_try_remove(rx_queue, &rx_msg)) {
+
+    cf.id = rx_msg.id;
+    cf.len = rx_msg.dlc;
+
+    for (byte i = 0; i < rx_msg.dlc; i++) {
+      cf.data[i] = rx_msg.data[i];
+    }
+
+    cf.rtr = (rx_msg.id & CAN2040_ID_RTR);
+    cf.ext = (rx_msg.id & CAN2040_ID_EFF);
+
+    ++_numMsgsRcvd;
+  }
+
   return cf;
 }
 
@@ -160,18 +160,7 @@ void CBUSACAN2040::notify_cb(struct can2040 *cd, uint32_t notify, struct can2040
   switch (notify) {
   case CAN2040_NOTIFY_RX:
     // DEBUG_SERIAL.printf("acan2040 cb: message received\n");
-
-    _msg.id = amsg->id;
-    _msg.len = amsg->dlc;
-
-    for (uint8_t i = 0; i < _msg.len && i < 8; i++) {
-      _msg.data[i] = amsg->data[i];
-    }
-
-    _msg.rtr = amsg->id & CAN2040_ID_RTR;
-    _msg.ext = amsg->id & CAN2040_ID_EFF;
-
-    rx_buffer->put(&_msg);
+    queue_try_add(rx_queue, amsg);
     break;
 
   case CAN2040_NOTIFY_TX:
@@ -227,23 +216,23 @@ bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
 
   /// send message if can2040 can accept it, otherwise buffer it in the tx queue
 
+  tx_msg.id = msg->id;
+  tx_msg.dlc = msg->len;
+
+  if (msg->rtr)
+    tx_msg.id |= 0x40000000;
+
+  if (msg->ext)
+    tx_msg.id |= 0x80000000;
+
+  for (uint8_t i = 0; i < msg->len && i < 8; i++) {
+    tx_msg.data[i] = msg->data[i];
+  }
+
   if ((ok = acan2040->ok_to_send())) {
-    tx_msg.id = msg->id;
-    tx_msg.dlc = msg->len;
-
-    if (msg->rtr)
-      tx_msg.id |= 0x40000000;
-
-    if (msg->ext)
-      tx_msg.id |= 0x80000000;
-
-    for (uint8_t i = 0; i < msg->len && i < 8; i++) {
-      tx_msg.data[i] = msg->data[i];
-    }
-
     ok = acan2040->send_message(&tx_msg);
   } else {
-    tx_buffer->put(msg);
+    ok = queue_try_add(tx_queue, &tx_msg);
   }
 
   return ok;
@@ -263,8 +252,8 @@ void CBUSACAN2040::printStatus(void) {
 //
 
 void CBUSACAN2040::reset(void) {
-  delete rx_buffer;
-  delete tx_buffer;
+  queue_free(rx_queue);
+  queue_free(tx_queue);
   delete acan2040;
   begin();
 }
@@ -284,184 +273,8 @@ void CBUSACAN2040::setPins(byte gpio_tx, byte gpio_rx) {
 /// this can be tuned according to bus load and available memory
 //
 
-void CBUSACAN2040::setNumBuffers(byte num_rx_buffers, byte num_tx_buffers) {
+void CBUSACAN2040::setNumBuffers(unsigned int num_rx_buffers, unsigned int num_tx_buffers) {
   _num_rx_buffers = num_rx_buffers;
   _num_tx_buffers = num_tx_buffers;
 }
 
-
-///
-/// a circular buffer class
-///
-
-/// constructor and destructor
-
-circular_buffer::circular_buffer(byte num_items) {
-
-  _head = 0;
-  _tail = 0;
-  _hwm = 0;
-  _capacity = num_items;
-  _size = 0;
-  _puts = 0;
-  _gets = 0;
-  _overflows = 0;
-  _full = false;
-  _buffer = (buffer_entry_t *)malloc(num_items * sizeof(buffer_entry_t));
-}
-
-circular_buffer::~circular_buffer() {
-  free(_buffer);
-}
-
-/// if buffer has one or more stored items
-
-bool circular_buffer::available(void) {
-
-  return (_size > 0);
-}
-
-/// store an item to the buffer - overwrite oldest item if buffer is full
-/// only called from an interrupt context so we don't need to worry about subsequent interrupts
-
-void circular_buffer::put(const CANFrame *item) {
-
-  memcpy((CANFrame*)&_buffer[_head]._item, (const CANFrame *)item, sizeof(CANFrame));
-  _buffer[_head]._item_insert_time = micros();
-
-  // if the buffer is full, this put will overwrite the oldest item
-
-  if (_full) {
-    _tail = (_tail + 1) % _capacity;
-    ++_overflows;
-  }
-
-  _head = (_head + 1) % _capacity;
-  _full = _head == _tail;
-  _size = size();
-  _hwm = (_size > _hwm) ? _size : _hwm;
-  ++_puts;
-
-  return;
-}
-
-/// retrieve the next item from the buffer
-
-CANFrame *circular_buffer::get(void) {
-
-  CANFrame *p = nullptr;
-
-  // should always call ::available first to avoid returning null pointer
-
-  // protect against changes to the buffer by suspending interrupts
-
-  if (_size > 0) {
-    p = &_buffer[_tail]._item;
-    _full = false;
-    _tail = (_tail + 1) % _capacity;
-    _size = size();
-    ++_gets;
-  }
-
-  return p;
-}
-
-/// get the insert time of the current buffer tail item
-/// must be called before the item is removed by ::get
-
-unsigned long circular_buffer::insert_time(void) {
-
-  return (_buffer[_tail]._item_insert_time);
-}
-
-/// peek at the next item in the buffer without removing it
-
-CANFrame *circular_buffer::peek(void) {
-
-  // should always call ::available first to avoid this
-
-  if (_size == 0) {
-    return nullptr;
-  }
-
-  return (&_buffer[_tail]._item);
-}
-
-/// clear all items
-
-void circular_buffer::clear(void) {
-
-  _head = 0;
-  _tail = 0;
-  _full = false;
-  _size = 0;
-
-  return;
-}
-
-/// return high water mark
-
-byte circular_buffer::hwm(void) {
-
-  return _hwm;
-}
-
-/// return full indicator
-
-bool circular_buffer::full(void) {
-
-  return _full;
-}
-
-/// recalculate number of items in the buffer
-
-byte circular_buffer::size(void) {
-
-  byte size = _capacity;
-
-  if (!_full) {
-    if (_head >= _tail) {
-      size = _head - _tail;
-    } else {
-      size = _capacity + _head - _tail;
-    }
-  }
-
-  _size = size;
-  return _size;
-}
-
-/// return empty indicator
-
-bool circular_buffer::empty(void) {
-
-  return (!_full && (_head == _tail));
-}
-
-/// return number of free slots
-
-byte circular_buffer::free_slots(void) {
-
-  return (_capacity - _size);
-}
-
-/// number of puts
-
-unsigned int circular_buffer::puts(void) {
-
-  return _puts;
-}
-
-/// number of gets
-
-unsigned int circular_buffer::gets(void) {
-
-  return _gets;
-}
-
-/// number of overflows
-
-unsigned int circular_buffer::overflows(void) {
-
-  return _overflows;
-}
