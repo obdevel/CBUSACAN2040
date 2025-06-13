@@ -81,7 +81,7 @@ public:
   void notify_cb(struct can2040 *cd, uint32_t notify, struct can2040_msg *amsg);
 
   ACAN2040 *acan2040;
-  queue_t *tx_queue, *rx_queue;
+  queue_t tx_queue, rx_queue;
 
 private:
   void initMembers(void);

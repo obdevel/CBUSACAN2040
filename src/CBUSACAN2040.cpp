@@ -87,8 +87,8 @@ bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
   (void)poll;       // not used
 
   // allocate tx and tx buffers
-  queue_init(tx_queue, sizeof(struct can2040_msg), _num_tx_buffers);
-  queue_init(rx_queue, sizeof(struct can2040_msg), _num_rx_buffers);
+  queue_init(&tx_queue, sizeof(struct can2040_msg), _num_tx_buffers);
+  queue_init(&rx_queue, sizeof(struct can2040_msg), _num_rx_buffers);
 
   acan2040 = new ACAN2040(0, _gpio_tx, _gpio_rx, CANBITRATE, F_CPU, cb);
   acan2040->begin();
@@ -112,14 +112,13 @@ bool CBUSACAN2040::available(void) {
   /// attempt to drain down the tx buffer
   /// do this here as it's the only function that is called sufficiently frequently
 
-  while (!queue_is_empty(tx_queue) && acan2040->ok_to_send()) {
-    queue_try_remove(tx_queue, &tx_msg);
+  while (acan2040->ok_to_send() && queue_try_remove(&tx_queue, &tx_msg)) {
     acan2040->send_message(&tx_msg);
   }
 
   /// check for new received messages
 
-  return (!queue_is_empty(rx_queue));
+  return (!queue_is_empty(&rx_queue));
 }
 
 //
@@ -131,7 +130,7 @@ CANFrame CBUSACAN2040::getNextMessage(void) {
   CANFrame cf;
   struct can2040_msg rx_msg;
 
-  if (queue_try_remove(rx_queue, &rx_msg)) {
+  if (queue_try_remove(&rx_queue, &rx_msg)) {
 
     cf.id = rx_msg.id;
     cf.len = rx_msg.dlc;
@@ -160,7 +159,7 @@ void CBUSACAN2040::notify_cb(struct can2040 *cd, uint32_t notify, struct can2040
   switch (notify) {
   case CAN2040_NOTIFY_RX:
     // DEBUG_SERIAL.printf("acan2040 cb: message received\n");
-    queue_try_add(rx_queue, amsg);
+    queue_try_add(&rx_queue, amsg);
     break;
 
   case CAN2040_NOTIFY_TX:
@@ -232,7 +231,7 @@ bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
   if ((ok = acan2040->ok_to_send())) {
     ok = acan2040->send_message(&tx_msg);
   } else {
-    ok = queue_try_add(tx_queue, &tx_msg);
+    ok = queue_try_add(&tx_queue, &tx_msg);
   }
 
   return ok;
@@ -252,8 +251,8 @@ void CBUSACAN2040::printStatus(void) {
 //
 
 void CBUSACAN2040::reset(void) {
-  queue_free(rx_queue);
-  queue_free(tx_queue);
+  queue_free(&rx_queue);
+  queue_free(&tx_queue);
   delete acan2040;
   begin();
 }
