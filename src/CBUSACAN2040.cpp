@@ -64,11 +64,10 @@ CBUSACAN2040::CBUSACAN2040(CBUSConfig *the_config) : CBUSbase(the_config) {
 void CBUSACAN2040::initMembers(void) {
   _num_rx_buffers = rx_qsize;
   _num_tx_buffers = tx_qsize;
-  eventhandler = NULL;
-  eventhandlerex = NULL;
-  framehandler = NULL;
-  _gpio_tx = 0;
-  _gpio_rx = 0;
+  eventhandler = nullptr;
+  eventhandlerex = nullptr;
+  framehandler = nullptr;
+  transmithandler = nullptr;
 
   acan2040p = this;
 }
@@ -83,15 +82,19 @@ CBUSACAN2040::~CBUSACAN2040() {
 
 bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
 
-  (void)(spi);      // not used
-  (void)poll;       // not used
+  (void)spi;      // not used
+  (void)poll;     // not used
 
-  // allocate tx and tx buffers
+  /// allocate tx and tx buffers - using Pico SDK queue API
+
   queue_init(&tx_queue, sizeof(struct can2040_msg), _num_tx_buffers);
   queue_init(&rx_queue, sizeof(struct can2040_msg), _num_rx_buffers);
 
+  /// initialise the can2040 CAN driver
+
   acan2040 = new ACAN2040(0, _gpio_tx, _gpio_rx, CANBITRATE, F_CPU, cb);
   acan2040->begin();
+
   return true;
 }
 
@@ -127,20 +130,20 @@ bool CBUSACAN2040::available(void) {
 
 CANFrame CBUSACAN2040::getNextMessage(void) {
 
-  CANFrame cf;
   struct can2040_msg rx_msg;
+  CANFrame cf;
 
   if (queue_try_remove(&rx_queue, &rx_msg)) {
 
     cf.id = rx_msg.id;
     cf.len = rx_msg.dlc;
 
-    for (byte i = 0; i < rx_msg.dlc; i++) {
-      cf.data[i] = rx_msg.data[i];
-    }
-
     cf.rtr = (rx_msg.id & CAN2040_ID_RTR);
     cf.ext = (rx_msg.id & CAN2040_ID_EFF);
+
+    for (byte i = 0; i < rx_msg.dlc && i < 8; i++) {
+      cf.data[i] = rx_msg.data[i];
+    }
 
     ++_numMsgsRcvd;
   }
@@ -149,7 +152,7 @@ CANFrame CBUSACAN2040::getNextMessage(void) {
 }
 
 //
-/// callback
+/// callback function - called in interrupt context by the can2040 driver
 //
 
 void CBUSACAN2040::notify_cb(struct can2040 *cd, uint32_t notify, struct can2040_msg *amsg) {
@@ -187,20 +190,21 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
   // rtr and ext default to false unless arguments are supplied - see method definition in .h
   // priority defaults to 1011 low/medium
 
-  bool ok;
-
-  // format message and send
+  /// format message and send
 
   msg->rtr = rtr;
   msg->ext = ext;
-  makeHeader(msg, priority);                      // default priority unless user overrides
-  ok = sendMessageNoUpdate(msg);                  // send the CAN message
+  makeHeader(msg, priority);
 
-  // call user transmit handler
-  if (transmithandler != nullptr) {
-    (void)(*transmithandler)(msg);
+  bool ok = sendMessageNoUpdate(msg);             // send the CAN message
+
+  /// call user transmit handler, if provided
+
+  if (ok && transmithandler != nullptr) {
+    (*transmithandler)(msg);
   }
 
+  _numMsgsSent += ok;
   return ok;
 }
 
@@ -210,31 +214,29 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
 
 bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
 
-  bool ok;
   struct can2040_msg tx_msg;
-
-  /// send message if can2040 can accept it, otherwise buffer it in the tx queue
 
   tx_msg.id = msg->id;
   tx_msg.dlc = msg->len;
 
   if (msg->rtr)
-    tx_msg.id |= 0x40000000;
+    tx_msg.id |= CAN2040_ID_RTR;
 
   if (msg->ext)
-    tx_msg.id |= 0x80000000;
+    tx_msg.id |= CAN2040_ID_EFF;
 
   for (uint8_t i = 0; i < msg->len && i < 8; i++) {
     tx_msg.data[i] = msg->data[i];
   }
 
-  if ((ok = acan2040->ok_to_send())) {
-    ok = acan2040->send_message(&tx_msg);
+  /// send message if can2040 driver can accept it, otherwise buffer it in the tx queue
+
+  if (acan2040->ok_to_send()) {
+    return (acan2040->send_message(&tx_msg));
   } else {
-    ok = queue_try_add(&tx_queue, &tx_msg);
+    return (queue_try_add(&tx_queue, &tx_msg));
   }
 
-  return ok;
 }
 
 //
@@ -251,6 +253,8 @@ void CBUSACAN2040::printStatus(void) {
 //
 
 void CBUSACAN2040::reset(void) {
+
+  acan2040->stop();
   queue_free(&rx_queue);
   queue_free(&tx_queue);
   delete acan2040;
@@ -263,6 +267,7 @@ void CBUSACAN2040::reset(void) {
 //
 
 void CBUSACAN2040::setPins(byte gpio_tx, byte gpio_rx) {
+
   _gpio_tx = gpio_tx;
   _gpio_rx = gpio_rx;
 }
@@ -273,6 +278,7 @@ void CBUSACAN2040::setPins(byte gpio_tx, byte gpio_rx) {
 //
 
 void CBUSACAN2040::setNumBuffers(unsigned int num_rx_buffers, unsigned int num_tx_buffers) {
+
   _num_rx_buffers = num_rx_buffers;
   _num_tx_buffers = num_tx_buffers;
 }

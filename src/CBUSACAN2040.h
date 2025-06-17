@@ -44,11 +44,11 @@
 
 // constants
 
-static const byte tx_qsize = 16;
-static const byte rx_qsize = 64;
-static const byte txpin = 1;
-static const byte rx_pin = 2;
-static const uint32_t CANBITRATE = 125000UL;                // 125Kb/s - fixed for CBUS
+static const uint32_t tx_qsize = 16;
+static const uint32_t rx_qsize = 64;
+static const uint32_t txpin = 1;
+static const uint32_t rx_pin = 2;
+static const uint32_t CANBITRATE = 125000;                // 125Kb/s - fixed for CBUS
 
 /// class definitions
 
@@ -69,7 +69,7 @@ public:
   bool begin(bool poll = false, SPIClassRP2040& spi = SPI);    // note default args
   bool available(void);
   CANFrame getNextMessage(void);
-  bool sendMessage(CANFrame * msg, bool rtr = false, bool ext = false, byte priority = DEFAULT_PRIORITY);   // note default arguments
+  bool sendMessage(CANFrame *msg, bool rtr = false, bool ext = false, byte priority = DEFAULT_PRIORITY);   // note default arguments
   bool sendMessageNoUpdate(CANFrame *msg);
   void reset(void);
 
