@@ -66,6 +66,7 @@ public:
   ~CBUSACAN2040();
 
   // these methods are declared virtual in the base class and must be implemented by the derived class
+
   bool begin(bool poll = false, SPIClassRP2040& spi = SPI);    // note default args
   bool available(void);
   CANFrame getNextMessage(void);
@@ -75,17 +76,19 @@ public:
 
   // these methods are specific to this implementation
   // they are not declared or implemented by the base CBUS class
-  void setNumBuffers(unsigned int num_rx_buffers, unsigned int _num_tx_buffers = 2);
-  void setPins(byte tx_pin, byte rx_pin);
-  void printStatus(void);
+
+  void setNumBuffers(const unsigned int num_rx_buffers, const unsigned int _num_tx_buffers = 2);
+  void setPins(const byte tx_pin, const byte rx_pin);
+  void setPIOInstance(const byte pio_instance);
   void notify_cb(struct can2040 *cd, uint32_t notify, struct can2040_msg *amsg);
+  void printStatus(void);
 
   ACAN2040 *acan2040;
   queue_t tx_queue, rx_queue;
 
 private:
   void initMembers(void);
-  byte _gpio_tx, _gpio_rx;
+  byte _gpio_tx, _gpio_rx, _pio_instance;
   unsigned int _num_tx_buffers, _num_rx_buffers;
 };
 

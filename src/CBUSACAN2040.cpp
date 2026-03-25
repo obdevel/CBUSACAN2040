@@ -64,6 +64,8 @@ CBUSACAN2040::CBUSACAN2040(CBUSConfig *the_config) : CBUSbase(the_config) {
 void CBUSACAN2040::initMembers(void) {
   _num_rx_buffers = rx_qsize;
   _num_tx_buffers = tx_qsize;
+  _pio_instance = 0;
+
   eventhandler = nullptr;
   eventhandlerex = nullptr;
   framehandler = nullptr;
@@ -85,22 +87,18 @@ bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
   (void)spi;      // not used
   (void)poll;     // not used
 
-  /// allocate tx and tx buffers - using Pico SDK queue API
+  /// allocate tx and tx buffers, using the Pico SDK queue API
 
   queue_init(&tx_queue, sizeof(struct can2040_msg), _num_tx_buffers);
   queue_init(&rx_queue, sizeof(struct can2040_msg), _num_rx_buffers);
 
-  /// initialise the can2040 CAN driver
+  /// create and initialise the can2040 CAN driver instance
 
-  acan2040 = new ACAN2040(0, _gpio_tx, _gpio_rx, CANBITRATE, F_CPU, cb);
+  acan2040 = new ACAN2040(_pio_instance, _gpio_tx, _gpio_rx, CANBITRATE, F_CPU, cb);
   acan2040->begin();
 
   return true;
 }
-
-//
-/// callback
-//
 
 //
 /// attempt to send any buffered messages in the tx buffer
@@ -109,7 +107,6 @@ bool CBUSACAN2040::begin(bool poll, SPIClassRP2040& spi) {
 
 bool CBUSACAN2040::available(void) {
 
-  CANFrame cf;
   struct can2040_msg tx_msg;
 
   /// attempt to drain down the tx buffer
@@ -190,7 +187,7 @@ bool CBUSACAN2040::sendMessage(CANFrame *msg, bool rtr, bool ext, byte priority)
   // rtr and ext default to false unless arguments are supplied - see method definition in .h
   // priority defaults to 1011 low/medium
 
-  /// format message and send
+  /// translate message and send
 
   msg->rtr = rtr;
   msg->ext = ext;
@@ -229,14 +226,15 @@ bool CBUSACAN2040::sendMessageNoUpdate(CANFrame *msg) {
     tx_msg.data[i] = msg->data[i];
   }
 
-  /// send message if can2040 driver can accept it, otherwise buffer it in the tx queue
+  _ledGrn.pulse();
+
+  /// send message if can2040 driver can accept it, otherwise try to buffer it in the tx queue
 
   if (acan2040->ok_to_send()) {
     return (acan2040->send_message(&tx_msg));
   } else {
     return (queue_try_add(&tx_queue, &tx_msg));
   }
-
 }
 
 //
@@ -263,21 +261,34 @@ void CBUSACAN2040::reset(void) {
 
 //
 /// set the CS and interrupt pins - option to override defaults
-/// used as CANL and CANH in this library
+/// used as CAN TX and CAN RX in this library
+/// must call before ::begin
 //
 
-void CBUSACAN2040::setPins(byte gpio_tx, byte gpio_rx) {
+void CBUSACAN2040::setPins(const byte gpio_tx, const byte gpio_rx) {
 
   _gpio_tx = gpio_tx;
   _gpio_rx = gpio_rx;
 }
 
 //
-/// set the number of CAN frame receive buffers
-/// this can be tuned according to bus load and available memory
+/// select the PIO instance to use, default = 0
+/// must call before ::begin
 //
 
-void CBUSACAN2040::setNumBuffers(unsigned int num_rx_buffers, unsigned int num_tx_buffers) {
+void CBUSACAN2040::setPIOInstance(const byte pio_instance) {
+
+  _pio_instance = pio_instance;
+
+}
+
+//
+/// set the number of CAN frame receive buffers
+/// this can be tuned according to bus load and available memory
+/// must call before ::begin
+//
+
+void CBUSACAN2040::setNumBuffers(const unsigned int num_rx_buffers, const unsigned int num_tx_buffers) {
 
   _num_rx_buffers = num_rx_buffers;
   _num_tx_buffers = num_tx_buffers;
